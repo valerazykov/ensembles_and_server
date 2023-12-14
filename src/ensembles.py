@@ -29,6 +29,9 @@ class RandomForestMSE:
         feature_subsample_size : float
             The size of feature set for each tree. If None then use one-third
             of all features.
+
+        error_func: callable
+            Function for measuring errors when the number of trees increases.
         """
         self.n_estimators = n_estimators
         self.max_depth = max_depth
@@ -76,19 +79,13 @@ class RandomForestMSE:
             tree.fit(X[idx], y[idx])
 
         if X_val is not None and y_val is not None:
+            self.ensemble_errors_history = np.zeros(self.n_estimators)
             trees_preds = np.zeros((self.n_estimators, X_val.shape[0]))
             for tree_num, tree in enumerate(self.trees):
                 trees_preds[tree_num] = tree.predict(X_val)
-
-            ensemble_preds = (np.cumsum(trees_preds, axis=0) /
-                              np.arange(
-                                  1, self.n_estimators + 1
-                              ).reshape(-1, 1))
-
-            self.ensemble_errors_history = np.zeros(self.n_estimators)
-            for i, ens_pred in enumerate(ensemble_preds):
-                self.ensemble_errors_history[i] = self.error_func(
-                    y_val, ens_pred
+                ensemble_pred = np.sum(trees_preds, axis=0) / (tree_num + 1)
+                self.ensemble_errors_history[tree_num] = self.error_func(
+                    y_val, ensemble_pred
                 )
 
         return self
@@ -108,14 +105,16 @@ class RandomForestMSE:
         for tree_num, tree in enumerate(self.trees):
             trees_preds[tree_num] = tree.predict(X)
 
-        ens_pred = np.mean(trees_preds, axis=0)
-        return ens_pred
+        return np.mean(trees_preds, axis=0)
 
 
 class GradientBoostingMSE:
     def __init__(
-        self, n_estimators, learning_rate=0.1, max_depth=5,
-        feature_subsample_size=None, **trees_parameters
+        self, n_estimators=100, learning_rate=0.1, max_depth=5,
+        feature_subsample_size=None,
+        error_func=root_mean_squared_error,
+        random_state=42,
+        **trees_parameters
     ):
         """
         n_estimators : int
@@ -130,8 +129,21 @@ class GradientBoostingMSE:
         feature_subsample_size : float
             The size of feature set for each tree. If None then use one-third
             of all features.
+
+        error_func: callable
+            Function for measuring errors when the number of trees increases.
         """
-        pass
+        self.n_estimators = n_estimators
+        self.learning_rate = learning_rate
+        self.max_depth = max_depth
+        self.feature_subsample_size = feature_subsample_size
+        self.error_func = error_func
+        self.random_state = random_state
+        self.trees_parameters = trees_parameters
+
+        self.trees = None
+        self.alphas = None
+        self.ensemble_errors_history = None
 
     def fit(self, X, y, X_val=None, y_val=None):
         """
@@ -141,7 +153,47 @@ class GradientBoostingMSE:
         y : numpy ndarray
             Array of size n_objects
         """
-        pass
+        max_features = (self.feature_subsample_size
+                        if self.feature_subsample_size is not None
+                        else max(1, X.shape[1] // 3))
+
+        self.trees = [
+            DecisionTreeRegressor(criterion="squared_error",
+                                  splitter="random",
+                                  max_depth=self.max_depth,
+                                  max_features=max_features,
+                                  random_state=self.random_state,
+                                  **self.trees_parameters)
+            for _ in range(self.n_estimators)
+        ]
+
+        self.alphas = np.zeros(self.n_estimators)
+        ensemble_pred_prev = np.zeros(X.shape[0])
+        tree_pred = np.zeros_like(ensemble_pred_prev)
+
+        def func(alpha):
+            return np.sum((ensemble_pred_prev + alpha * tree_pred - y) ** 2)
+
+        for tree_num, tree in enumerate(self.trees):
+            tree.fit(X, y - ensemble_pred_prev)
+            tree_pred = tree.predict(X)
+            alpha = minimize_scalar(func).x
+            self.alphas[tree_num] = self.learning_rate * alpha
+            ensemble_pred_prev += self.learning_rate * alpha * tree_pred
+
+        if X_val is not None and y_val is not None:
+            self.ensemble_errors_history = np.zeros(self.n_estimators)
+            trees_preds_val = np.zeros((self.n_estimators, X_val.shape[0]))
+            for tree_num, tree in enumerate(self.trees):
+                trees_preds_val[tree_num] = tree.predict(X_val)
+                ensemble_pred = np.sum(
+                    trees_preds_val * self.alphas.reshape(-1, 1), axis=0
+                )
+                self.ensemble_errors_history[tree_num] = self.error_func(
+                    y_val, ensemble_pred
+                )
+
+        return self
 
     def predict(self, X):
         """
@@ -153,4 +205,8 @@ class GradientBoostingMSE:
         y : numpy ndarray
             Array of size n_objects
         """
-        pass
+        trees_preds = np.zeros((self.n_estimators, X.shape[0]))
+        for tree_num, tree in enumerate(self.trees):
+            trees_preds[tree_num] = tree.predict(X)
+
+        return np.sum(trees_preds * self.alphas.reshape(-1, 1), axis=0)
