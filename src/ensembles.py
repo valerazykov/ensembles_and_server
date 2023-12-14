@@ -38,31 +38,21 @@ class RandomForestMSE:
         self.trees_parameters = trees_parameters
 
         self.trees = [
-            DecisionTreeRegressor(max_depth=max_depth, **trees_parameters)
+            DecisionTreeRegressor(criterion="squared_error",
+                                  splitter="random",
+                                  max_depth=max_depth,
+                                  max_features=feature_subsample_size,
+                                  random_state=random_state,
+                                  **trees_parameters)
             for _ in range(n_estimators)
         ]
 
-        np.random.seed(random_state)
-
-        self.obj_idx = None
-        self.feat_idx = None
         self.ensemble_errors_history = None
 
     def _get_obj_idx(self, X):
         idx = np.zeros((self.n_estimators, X.shape[0]), dtype="int64")
         for i in range(self.n_estimators):
             idx[i] = np.random.choice(X.shape[0], X.shape[0], replace=True)
-        return idx
-
-    def _get_feat_idx(self, X):
-        if self.feature_subsample_size is None:
-            k = max(1, X.shape[1] // 3)
-        else:
-            k = max(1, X.shape[1] * self.feature_subsample_size)
-
-        idx = np.zeros((self.n_estimators, k), dtype="int64")
-        for i in range(self.n_estimators):
-            idx[i] = np.random.choice(X.shape[1], k, replace=False)
         return idx
 
     def fit(self, X, y, X_val=None, y_val=None):
@@ -80,19 +70,16 @@ class RandomForestMSE:
             Array of size n_val_objects
         """
 
-        self.obj_idx = self._get_obj_idx(X)
-        self.feat_idx = self._get_feat_idx(X)
+        np.random.seed(self.random_state)
 
-        for tree_num, tree in enumerate(self.trees):
-            X_train = X[self.obj_idx[tree_num], :][:, self.feat_idx[tree_num]]
-            tree.fit(X_train, y[self.obj_idx[tree_num]])
+        for tree in self.trees:
+            idx = np.random.choice(X.shape[0], X.shape[0], replace=True)
+            tree.fit(X[idx], y[idx])
 
         if X_val is not None and y_val is not None:
             trees_preds = np.zeros((self.n_estimators, X_val.shape[0]))
             for tree_num, tree in enumerate(self.trees):
-                trees_preds[tree_num] = tree.predict(
-                    X_val[:, self.feat_idx[tree_num]]
-                )
+                trees_preds[tree_num] = tree.predict(X_val)
 
             ensemble_preds = (np.cumsum(trees_preds, axis=0) /
                               np.arange(
@@ -120,9 +107,7 @@ class RandomForestMSE:
 
         trees_preds = np.zeros((self.n_estimators, X.shape[0]))
         for tree_num, tree in enumerate(self.trees):
-            trees_preds[tree_num] = tree.predict(
-                X[:, self.feat_idx[tree_num]]
-            )
+            trees_preds[tree_num] = tree.predict(X)
 
         ens_pred = np.mean(trees_preds, axis=0)
         return ens_pred
