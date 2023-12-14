@@ -49,12 +49,6 @@ class RandomForestMSE:
 
         self.ensemble_errors_history = None
 
-    def _get_obj_idx(self, X):
-        idx = np.zeros((self.n_estimators, X.shape[0]), dtype="int64")
-        for i in range(self.n_estimators):
-            idx[i] = np.random.choice(X.shape[0], X.shape[0], replace=True)
-        return idx
-
     def fit(self, X, y, X_val=None, y_val=None):
         """
         X : numpy ndarray
