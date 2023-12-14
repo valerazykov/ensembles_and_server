@@ -37,16 +37,7 @@ class RandomForestMSE:
         self.random_state = random_state
         self.trees_parameters = trees_parameters
 
-        self.trees = [
-            DecisionTreeRegressor(criterion="squared_error",
-                                  splitter="random",
-                                  max_depth=max_depth,
-                                  max_features=feature_subsample_size,
-                                  random_state=random_state,
-                                  **trees_parameters)
-            for _ in range(n_estimators)
-        ]
-
+        self.trees = None
         self.ensemble_errors_history = None
 
     def fit(self, X, y, X_val=None, y_val=None):
@@ -65,6 +56,20 @@ class RandomForestMSE:
         """
 
         np.random.seed(self.random_state)
+
+        max_features = (self.feature_subsample_size
+                        if self.feature_subsample_size is not None
+                        else max(1, X.shape[1] // 3))
+
+        self.trees = [
+            DecisionTreeRegressor(criterion="squared_error",
+                                  splitter="random",
+                                  max_depth=self.max_depth,
+                                  max_features=max_features,
+                                  random_state=self.random_state,
+                                  **self.trees_parameters)
+            for _ in range(self.n_estimators)
+        ]
 
         for tree in self.trees:
             idx = np.random.choice(X.shape[0], X.shape[0], replace=True)
