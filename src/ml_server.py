@@ -4,7 +4,7 @@ from flask import Flask, request, url_for
 from flask import render_template, redirect, send_from_directory
 
 from flask_wtf.file import FileAllowed
-from wtforms.validators import DataRequired, NumberRange, NoneOf
+from wtforms.validators import NumberRange, NoneOf
 from wtforms import SelectField, StringField, SubmitField, DecimalField, IntegerField, FileField
 
 import numpy as np
@@ -57,10 +57,10 @@ class Model:
             self.model = GradientBoostingMSE(**self.params)
         else:
             raise TypeError("неизвестный тип модели")
-        
+
         self.model.fit(X, y, X_val, y_val, need_train_errors_history=True)
         return self
-    
+
     def predict(self, X):
         return self.model.predict(X)
 
@@ -125,14 +125,12 @@ class BstParamsSelectionForm(FlaskForm):
 
 class FitPageForm(FlaskForm):
     file_train_path = FileField('CSV-файл для обучения', validators=[
-        #DataRequired('Укажите файл'),
         FileAllowed(['csv'], 'Поддерживается только CSV формат')
     ])
     file_val_path = FileField('CSV-файл для валидиции (опционально)', validators=[
         FileAllowed(['csv'], 'Поддерживается только CSV формат')
     ])
     target_field = StringField("Название колонки с целевой переменной", validators=[
-        #DataRequired("Введине название колонки с целевой переменной")
     ])
     submit_open = SubmitField("Открыть файлы и обучить модель")
     submit_back = SubmitField("Назад")
@@ -141,7 +139,6 @@ class FitPageForm(FlaskForm):
 
 class PredictForm(FlaskForm):
     file_predict_path = FileField('CSV-файл для предсказания', validators=[
-        #DataRequired('Укажите файл'),
         FileAllowed(['csv'], 'Поддерживается только CSV формат')
     ])
 
@@ -178,7 +175,7 @@ def goto_origin():
 def params_selection():
     if model.type not in {RFOREST_TYPE, BOOSTING_TYPE}:
         return goto_origin()
-    
+
     try:
         title = "Выбор параметров модели"
         header = f"Выберите параметры модели \"{model.type}\""
@@ -187,7 +184,7 @@ def params_selection():
             params_selection_form = BstParamsSelectionForm()
         else:
             params_selection_form = RForestParamsSelectionForm()
-        
+
         if params_selection_form.validate_on_submit():
             if params_selection_form.submit_select.data:
                 model.params["n_estimators"] = params_selection_form.n_estimators_field.data
@@ -196,14 +193,14 @@ def params_selection():
                 model.params["feature_subsample_size"] = float(params_selection_form.feature_subsample_size_field.data)
                 if params_selection_form.learning_rate_field is not None:
                     model.params["learning_rate"] = float(params_selection_form.learning_rate_field.data)
-                
+
                 return redirect(url_for("fit_model"))
             else:
                 return goto_origin()
-        
+
         return render_template("from_form.html", title=title, header=header,
-                            form=params_selection_form)
-    except:
+                               form=params_selection_form)
+    except Exception:
         return goto_origin()
 
 
@@ -227,18 +224,18 @@ def fit_model(message=None):
                     return redirect("/fit_model/Необходимо передать данные для обучения")
                 if not fit_form.target_field.data:
                     return redirect("/fit_model/Необходимо указать название колонки с целевой переменной")
-                
+
                 try:
                     data_train = pd.read_csv(fit_form.file_train_path.data)
                 except EmptyDataError:
                     return redirect("/fit_model/Необходимо передать непустой файл для обучения")
-                
+
                 # use only numeric features
                 data_train = data_train.select_dtypes(include=[np.number])
 
                 if data_train.shape[0] == 0 or data_train.shape[1] <= 1:
                     return redirect("/fit_model/Передайте корректный файл для обучения")
-                
+
                 if fit_form.target_field.data not in data_train.columns:
                     return redirect("/fit_model/В файле для обучения нет указанной колонки с целевой переменной")
 
@@ -248,17 +245,17 @@ def fit_model(message=None):
                 if fit_form.file_val_path.data:
                     try:
                         data_val = pd.read_csv(fit_form.file_val_path.data)
-                    except:
+                    except EmptyDataError:
                         return redirect("/fit_model/Файл для валидации не может быть пустым")
-                    
+
                     data_val = data_val.select_dtypes(include=[np.number])
-                    
+
                     if data_val.shape[0] == 0:
                         return redirect("/fit_model/Файл для валидации должен содержать хотя бы один объект")
 
                     if data_val.shape[1] != data_train.shape[1] or (data_val.columns != data_train.columns).any():
                         return redirect("/fit_model/Файл для валидации должен быть согласован с файлом для обучения")
-                    
+
                     X_val = data_val.drop(columns=[fit_form.target_field.data]).to_numpy()
                     y_val = data_val[fit_form.target_field.data].to_numpy()
                 else:
@@ -271,7 +268,7 @@ def fit_model(message=None):
                 model.target_name = fit_form.target_field.data
 
                 return redirect(url_for("predict"))
-            
+
             if fit_form.submit_back.data:
                 model.params = {}
                 return redirect(url_for("params_selection"))
@@ -279,7 +276,7 @@ def fit_model(message=None):
                 return goto_origin()
 
         return render_template("from_form.html", title=title, header=header, form=fit_form)
-    except:
+    except Exception:
         return goto_origin()
 
 
@@ -288,7 +285,7 @@ def fit_model(message=None):
 def predict(message=None):
     if model.type not in {RFOREST_TYPE, BOOSTING_TYPE}:
         return goto_origin()
-    
+
     try:
         title = "Предсказание"
         if message is None:
@@ -324,16 +321,15 @@ def predict(message=None):
 
                 if (X_test.columns != model.feat_columns).any():
                     return redirect("/predict/Файл для предсказания должен быть согласован с файлом для обучения")
-                
+
                 X_test = X_test.to_numpy()
                 pred = model.predict(X_test)
                 np.savetxt("pred.txt", pred)
 
                 return redirect("/upload/pred.txt")
-            
 
         return render_template("from_form.html", form=form, title=title, header=header)
-    except:
+    except Exception:
         return goto_origin()
 
 
@@ -341,7 +337,7 @@ def predict(message=None):
 def model_info():
     if model.type not in {RFOREST_TYPE, BOOSTING_TYPE}:
         return goto_origin()
-    
+
     try:
         title = "Информация о модели"
         header = f"Информация о модели \"{model.type}\""
@@ -375,12 +371,12 @@ def model_info():
 
         else:
             fig = px.bar(df_train, x="число деревьев", y="RMSE",
-                                title="График зависимости RMSE на обучающей выборке от числа деревьев")
+                         title="График зависимости RMSE на обучающей выборке от числа деревьев")
             fig.update_layout(title_x=0.5)
-            
+
         # Create graphJSON
         graphJSON = json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
-        
+
         params_to_display = model.params.copy()
         if "learning_rate" not in params_to_display:
             params_to_display["learning_rate"] = None
@@ -392,9 +388,9 @@ def model_info():
 
         # Use render_template to pass graphJSON to html
         return render_template('model_info.html', graphJSON=graphJSON,
-                            title=title, header=header, form=form,
-                            **params_to_display)
-    except:
+                               title=title, header=header, form=form,
+                               **params_to_display)
+    except Exception:
         return goto_origin()
 
 
@@ -402,5 +398,5 @@ def model_info():
 def upload(name):
     try:
         return send_from_directory(".", name, as_attachment=True)
-    except:
+    except Exception:
         return goto_origin()
