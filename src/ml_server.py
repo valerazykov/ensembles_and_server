@@ -1,7 +1,7 @@
 from flask_wtf import FlaskForm
 from flask_bootstrap import Bootstrap
 from flask import Flask, request, url_for
-from flask import render_template, redirect
+from flask import render_template, redirect, send_from_directory
 
 from flask_wtf.file import FileAllowed
 from wtforms.validators import DataRequired, NumberRange, NoneOf
@@ -41,6 +41,8 @@ class Model:
         self.type = 0
         self.model = None
         self.params = {}
+        self.feat_columns = []
+        self.target_name = ""
 
     def fit(self, X, y, X_val=None, y_val=None):
         if self.type == RFOREST_TYPE:
@@ -116,11 +118,11 @@ class BstParamsSelectionForm(FlaskForm):
 
 
 class FitPageForm(FlaskForm):
-    file_train_path = FileField('Файл для обучения', validators=[
+    file_train_path = FileField('CSV-файл для обучения', validators=[
         #DataRequired('Укажите файл'),
         FileAllowed(['csv'], 'Поддерживается только CSV формат')
     ])
-    file_val_path = FileField('Файл для валидиции (опционально)', validators=[
+    file_val_path = FileField('CSV-файл для валидиции (опционально)', validators=[
         FileAllowed(['csv'], 'Поддерживается только CSV формат')
     ])
     target_field = StringField("Название колонки с целевой переменной", validators=[
@@ -129,6 +131,18 @@ class FitPageForm(FlaskForm):
     submit_open = SubmitField("Открыть файлы и обучить модель")
     submit_back = SubmitField("Назад")
     submit_goto_origin = SubmitField("Вернуться в начало")
+
+
+class PredictForm(FlaskForm):
+    file_predict_path = FileField('CSV-файл для предсказания', validators=[
+        #DataRequired('Укажите файл'),
+        FileAllowed(['csv'], 'Поддерживается только CSV формат')
+    ])
+
+    submit_pred = SubmitField("Сделать и скачать предсказание")
+    submit_back = SubmitField("Назад")
+    submit_goto_origin = SubmitField("Вернуться в начало")
+    submit_info = SubmitField("Посмотреть информацию о модели")
 
 
 
@@ -218,7 +232,6 @@ def fit_model(message=None):
             X_train = data_train.drop(columns=[fit_form.target_field.data]).to_numpy()
             y_train = data_train[fit_form.target_field.data].to_numpy()
 
-
             if fit_form.file_val_path.data:
                 try:
                     data_val = pd.read_csv(fit_form.file_val_path.data)
@@ -240,6 +253,8 @@ def fit_model(message=None):
                 y_val = None
 
             model.fit(X_train, y_train, X_val, y_val)
+            model.feat_columns = data_train.columns.drop(fit_form.target_field.data)
+            model.target_name = fit_form.target_field.data
 
             return redirect(url_for("predict"))
         
@@ -252,6 +267,61 @@ def fit_model(message=None):
     return render_template("from_form.html", title=title, header=header, form=fit_form)
 
 
-@app.route("/predict")
-def predict():
-    return "<h3>predict</h3>"
+@app.route("/predict", methods=["GET", "POST"])
+@app.route("/predict/<string:message>", methods=["GET", "POST"])
+def predict(message=None):
+    if model.type not in {RFOREST_TYPE, BOOSTING_TYPE}:
+        return goto_origin()
+    title = "Предсказание"
+    if message is None:
+        header = "Выберите файл для предсказания"
+    else:
+        header = message
+    form = PredictForm()
+
+    if form.validate_on_submit():
+        if form.submit_back.data:
+            return redirect(url_for("fit_model"))
+        if form.submit_goto_origin.data:
+            return goto_origin()
+        if form.submit_info.data:
+            return redirect(url_for("model_info"))
+        if form.submit_pred.data:
+            if not form.file_predict_path.data:
+                return redirect("/predict/Необходимо передать данные для предсказания")
+            try:
+                X_test = pd.read_csv(form.file_predict_path.data)
+            except EmptyDataError:
+                return redirect("/predict/Файл для предсказания должен быть не пустым")
+
+            X_test = X_test.select_dtypes(include=[np.number])
+
+            if X_test.shape[0] == 0:
+                return redirect("/predict/Файл для предсказания должен содержать хотя бы один объект")
+
+            if X_test.shape[1] == model.feat_columns.shape[0] + 1:
+                if model.target_name not in X_test.columns:
+                    return redirect("/predict/Файл для предсказания должен быть согласован с файлом для обучения")
+                X_test = X_test.drop(columns=[model.target_name])
+
+            if (X_test.columns != model.feat_columns).any():
+                return redirect("/predict/Файл для предсказания должен быть согласован с файлом для обучения")
+            
+            X_test = X_test.to_numpy()
+            pred = model.predict(X_test)
+            np.savetxt("pred.txt", pred)
+
+            return redirect("/upload/pred.txt")
+        
+
+    return render_template("from_form.html", form=form, title=title, header=header)
+
+
+@app.route("/model_info")
+def model_info():
+    return "<h1>info</h1>"
+
+
+@app.route("/upload/<path:name>")
+def upload(name):
+    return send_from_directory(".", name, as_attachment=True)
