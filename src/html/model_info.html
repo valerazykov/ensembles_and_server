@@ -1,0 +1,62 @@
+<!doctype html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{{title}}</title>
+</head>
+<body>
+    <center><h1>{{header}}</h1></center>
+
+    <div>
+        <h3>Параметры модели</h3>
+        <ul>
+            <li>n_estimators = {{n_estimators}}</li>
+            <li>max_depth = {{max_depth}}</li>
+            <li>feature_subsample_size = {{feature_subsample_size}}</li>
+            {% if learning_rate %}
+            <li>learning_rate = {{learning_rate}}</li>
+            {% endif %}
+        </ul>
+        <h3>Информация об обучающей выборке</h3>
+        <ul>
+            <li>Число объектов: {{n_sam}}</li>
+            <li>Число признаков: {{n_feat}}</li>
+        </ul>
+    </div>
+
+    <div id='chart' class='chart'></div>
+
+    <script src='https://cdn.plot.ly/plotly-latest.min.js'></script>
+    <script type='text/javascript'>
+        let graphs = {{graphJSON | safe}};
+        Plotly.plot('chart', graphs, {});
+    </script>
+
+    <style>
+        * {
+            -webkit-box-sizing: border-box;
+            box-sizing: border-box;
+        }
+        body {
+            background-color: #272b34;
+            font-family: 'Khula', sans-serif;
+            font-weight: 300;
+            color: white;
+            line-height: 1em;
+            margin: 0;
+        padding: 2em 1em;
+        }
+
+    </style>
+
+    {% extends "base.html" %}
+    {% block content %}
+    <div class="container" align="right">
+        {{ wtf.quick_form(form) }}
+    </div>
+
+    {% endblock %}
+</body>
+
+</html>
