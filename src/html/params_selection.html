@@ -7,5 +7,18 @@
 </head>
 <body>
     <center><h1>Выберите параметры модели "{{model_type}}"</h1></center>
+    {% extends "base.html" %}
+
+    {% block content %}
+
+    <div class="container">
+        {{ wtf.quick_form(form1) }}
+    </div>
+    
+    <div class="container" style="display: flex; justify-content: flex-end">
+        {{ wtf.quick_form(form2) }}
+    </div>
+
+    {% endblock %}
 </body>
 </html>
