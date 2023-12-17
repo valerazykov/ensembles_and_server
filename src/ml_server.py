@@ -3,8 +3,9 @@ from flask_bootstrap import Bootstrap
 from flask import Flask, request, url_for
 from flask import render_template, redirect
 
+from flask_wtf.file import FileAllowed
 from wtforms.validators import DataRequired, NumberRange, NoneOf
-from wtforms import SelectField, StringField, SubmitField, DecimalField, IntegerField
+from wtforms import SelectField, StringField, SubmitField, DecimalField, IntegerField, FileField
 
 from ensembles import RandomForestMSE, GradientBoostingMSE
 
@@ -77,7 +78,8 @@ class RForestParamsSelectionForm(FlaskForm):
                                                 default=RFOREST_DEFAULT_PARAMS["feature_subsample_size"],
                                                 validators=Validators.feature_subsample_size)
     learning_rate_field = None
-    submit = SubmitField("Выбрать")
+    submit_select = SubmitField("Выбрать")
+    submit_goto_origin = SubmitField("Вернуться в начало")
 
 
 class BstParamsSelectionForm(FlaskForm):
@@ -90,56 +92,65 @@ class BstParamsSelectionForm(FlaskForm):
                                                 validators=Validators.feature_subsample_size)
     learning_rate_field = DecimalField("learning_rate", default=BST_DEFAULT_PARAMS["learning_rate"],
                                        validators=Validators.learning_rate)
-    submit = SubmitField("Выбрать")
+    submit_select = SubmitField("Выбрать")
+    submit_goto_origin = SubmitField("Вернуться в начало")
 
 
-class GotoOriginForm(FlaskForm):
-    submit = SubmitField("Вернуться в начало")
+class FileForm(FlaskForm):
+    file_path = FileField('Path', validators=[
+        DataRequired('Specify file'),
+        FileAllowed(['csv'], 'CSV only!')
+    ])
+    submit = SubmitField('Open File')
 
 
 @app.route("/", methods=["GET", "POST"])
 def choose_model():
-    global model
-    model = Model()
-
     model_dropdown = ModelDropdown()
+    title = "Выбор модели"
+    header = "Выберите модель"
 
     if model_dropdown.validate_on_submit():
         model.type = model_dropdown.dropdown.data
         return redirect(url_for("params_selection"))
 
-    return render_template("choose_model.html", form=model_dropdown)
+    return render_template("from_form.html", title=title, header=header, form=model_dropdown)
 
+def goto_origin():
+    global model
+    model = Model()
+    return redirect(url_for("choose_model"))
 
 @app.route("/params_selection", methods=["GET", "POST"])
 def params_selection():
+    title = "Выбор параметров модели"
+    header = f"Выберите параметры модели \"{model.type}\""
+
     if model.type == BOOSTING_TYPE:
         params_selection_form = BstParamsSelectionForm()
     else:
         params_selection_form = RForestParamsSelectionForm()
-
-    goto_origin_form = GotoOriginForm()
     
-    if params_selection_form.validate_on_submit() and request.form["submit"] == "Выбрать":
-        model.params["n_estimators"] = params_selection_form.n_estimators_field.data
-        model.params["max_depth"] = params_selection_form.max_depth_field.data
-        model.params["feature_subsample_size"] = float(params_selection_form.feature_subsample_size_field.data)
-        model.params["learning_rate"] = (None
-                                        if params_selection_form.learning_rate_field is None
-                                        else float(params_selection_form.learning_rate_field.data))
-        
-        return redirect(url_for("fit_model"))
+    if params_selection_form.validate_on_submit():
+        if params_selection_form.submit_select.data:
+            model.params["n_estimators"] = params_selection_form.n_estimators_field.data
+            model.params["max_depth"] = params_selection_form.max_depth_field.data
+            model.params["feature_subsample_size"] = float(params_selection_form.feature_subsample_size_field.data)
+            model.params["learning_rate"] = (None
+                                            if params_selection_form.learning_rate_field is None
+                                            else float(params_selection_form.learning_rate_field.data))
+            
+            return redirect(url_for("fit_model"))
+        else:
+            return goto_origin()
     
-    if goto_origin_form.validate_on_submit() and request.form["submit"] == "Вернуться в начало":
-        return redirect(url_for("choose_model"))
-    
-    return render_template("params_selection.html", model_type=model.type,
-                           form1=params_selection_form,
-                           form2=goto_origin_form)
+    return render_template("from_form.html", title=title, header=header,
+                           form=params_selection_form)
 
 
 @app.route("/fit_model", methods=["GET", "POST"])
 def fit_model():
-    app.logger.info(model.type)
-    app.logger.info(str(model.params))
-    return render_template("fit_model.html")
+    title = "Обучение модели"
+    header = f"Выберите файлы для обучения модели \"{model.type}\""
+    file_form = FileForm()
+    return render_template("from_form.html", title=title, header=header, form=file_form)
