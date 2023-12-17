@@ -7,6 +7,10 @@ from flask_wtf.file import FileAllowed
 from wtforms.validators import DataRequired, NumberRange, NoneOf
 from wtforms import SelectField, StringField, SubmitField, DecimalField, IntegerField, FileField
 
+import numpy as np
+import pandas as pd
+from pandas.errors import EmptyDataError
+
 from ensembles import RandomForestMSE, GradientBoostingMSE
 
 
@@ -37,6 +41,21 @@ class Model:
         self.type = 0
         self.model = None
         self.params = {}
+
+    def fit(self, X, y, X_val=None, y_val=None):
+        if self.type == RFOREST_TYPE:
+            self.model = RandomForestMSE(**self.params)
+        elif self.type == BOOSTING_TYPE:
+            self.model = GradientBoostingMSE(**self.params)
+        else:
+            raise TypeError("неизвестный тип модели")
+        
+        self.model.fit(X, y, X_val, y_val)
+        return self
+    
+    def predict(self, X):
+        return self.model.predict(X)
+
 
 model = Model()
 
@@ -96,12 +115,21 @@ class BstParamsSelectionForm(FlaskForm):
     submit_goto_origin = SubmitField("Вернуться в начало")
 
 
-class FileForm(FlaskForm):
-    file_path = FileField('Path', validators=[
-        DataRequired('Specify file'),
-        FileAllowed(['csv'], 'CSV only!')
+class FitPageForm(FlaskForm):
+    file_train_path = FileField('Файл для обучения', validators=[
+        #DataRequired('Укажите файл'),
+        FileAllowed(['csv'], 'Поддерживается только CSV формат')
     ])
-    submit = SubmitField('Open File')
+    file_val_path = FileField('Файл для валидиции (опционально)', validators=[
+        FileAllowed(['csv'], 'Поддерживается только CSV формат')
+    ])
+    target_field = StringField("Название колонки с целевой переменной", validators=[
+        #DataRequired("Введине название колонки с целевой переменной")
+    ])
+    submit_open = SubmitField("Открыть файлы и обучить модель")
+    submit_back = SubmitField("Назад")
+    submit_goto_origin = SubmitField("Вернуться в начало")
+
 
 
 @app.route("/", methods=["GET", "POST"])
@@ -116,13 +144,18 @@ def choose_model():
 
     return render_template("from_form.html", title=title, header=header, form=model_dropdown)
 
+
 def goto_origin():
     global model
     model = Model()
     return redirect(url_for("choose_model"))
 
+
 @app.route("/params_selection", methods=["GET", "POST"])
 def params_selection():
+    if model.type not in {RFOREST_TYPE, BOOSTING_TYPE}:
+        return goto_origin()
+    
     title = "Выбор параметров модели"
     header = f"Выберите параметры модели \"{model.type}\""
 
@@ -134,11 +167,11 @@ def params_selection():
     if params_selection_form.validate_on_submit():
         if params_selection_form.submit_select.data:
             model.params["n_estimators"] = params_selection_form.n_estimators_field.data
-            model.params["max_depth"] = params_selection_form.max_depth_field.data
+            if params_selection_form.max_depth_field.data != -1:
+                model.params["max_depth"] = params_selection_form.max_depth_field.data
             model.params["feature_subsample_size"] = float(params_selection_form.feature_subsample_size_field.data)
-            model.params["learning_rate"] = (None
-                                            if params_selection_form.learning_rate_field is None
-                                            else float(params_selection_form.learning_rate_field.data))
+            if params_selection_form.learning_rate_field is not None:
+                model.params["learning_rate"] = float(params_selection_form.learning_rate_field.data)
             
             return redirect(url_for("fit_model"))
         else:
@@ -149,8 +182,76 @@ def params_selection():
 
 
 @app.route("/fit_model", methods=["GET", "POST"])
-def fit_model():
+@app.route("/fit_model/<string:message>", methods=["GET", "POST"])
+def fit_model(message=None):
+    if model.type not in {RFOREST_TYPE, BOOSTING_TYPE}:
+        return goto_origin()
+
     title = "Обучение модели"
-    header = f"Выберите файлы для обучения модели \"{model.type}\""
-    file_form = FileForm()
-    return render_template("from_form.html", title=title, header=header, form=file_form)
+    if message is None:
+        header = f"Выберите файлы для обучения модели \"{model.type}\""
+    else:
+        header = message
+    fit_form = FitPageForm()
+
+    if request.method == 'POST':
+        if fit_form.validate_on_submit() and fit_form.submit_open.data:
+            if not fit_form.file_train_path.data:
+                return redirect("/fit_model/Необходимо передать данные для обучения")
+            if not fit_form.target_field.data:
+                return redirect("/fit_model/Необходимо указать название колонки с целевой переменной")
+            
+            try:
+                data_train = pd.read_csv(fit_form.file_train_path.data)
+            except EmptyDataError:
+                return redirect("/fit_model/Необходимо передать непустой файл для обучения")
+            
+            # use only numeric features
+            data_train = data_train.select_dtypes(include=[np.number])
+
+            if data_train.shape[0] == 0 or data_train.shape[1] <= 1:
+                return redirect("/fit_model/Передайте корректный файл для обучения")
+            
+            if fit_form.target_field.data not in data_train.columns:
+                return redirect("/fit_model/В файле для обучения нет указанной колонки с целевой переменной")
+
+            X_train = data_train.drop(columns=[fit_form.target_field.data]).to_numpy()
+            y_train = data_train[fit_form.target_field.data].to_numpy()
+
+
+            if fit_form.file_val_path.data:
+                try:
+                    data_val = pd.read_csv(fit_form.file_val_path.data)
+                except:
+                    return redirect("/fit_model/Файл для валидации не может быть пустым")
+                
+                data_val = data_val.select_dtypes(include=[np.number])
+                
+                if data_val.shape[0] == 0:
+                    return redirect("/fit_model/Файл для валидации должен содержать хотя бы один объект")
+
+                if data_val.shape[1] != data_train.shape[1] or (data_val.columns != data_train.columns).any():
+                    return redirect("/fit_model/Файл для валидации должен быть согласован с файлом для обучения")
+                
+                X_val = data_val.drop(columns=[fit_form.target_field.data]).to_numpy()
+                y_val = data_val[fit_form.target_field.data].to_numpy()
+            else:
+                X_val = None
+                y_val = None
+
+            model.fit(X_train, y_train, X_val, y_val)
+
+            return redirect(url_for("predict"))
+        
+        if fit_form.submit_back.data:
+            model.params = {}
+            return redirect(url_for("params_selection"))
+        if fit_form.submit_goto_origin.data:
+            return goto_origin()
+
+    return render_template("from_form.html", title=title, header=header, form=fit_form)
+
+
+@app.route("/predict")
+def predict():
+    return "<h3>predict</h3>"
