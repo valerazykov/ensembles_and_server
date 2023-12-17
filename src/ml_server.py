@@ -10,6 +10,11 @@ from wtforms import SelectField, StringField, SubmitField, DecimalField, Integer
 import numpy as np
 import pandas as pd
 from pandas.errors import EmptyDataError
+import json
+import plotly
+import plotly.express as px
+import plotly.graph_objects as go
+from plotly.subplots import make_subplots
 
 from ensembles import RandomForestMSE, GradientBoostingMSE
 
@@ -43,6 +48,7 @@ class Model:
         self.params = {}
         self.feat_columns = []
         self.target_name = ""
+        self.train_data_df = None
 
     def fit(self, X, y, X_val=None, y_val=None):
         if self.type == RFOREST_TYPE:
@@ -52,7 +58,7 @@ class Model:
         else:
             raise TypeError("неизвестный тип модели")
         
-        self.model.fit(X, y, X_val, y_val)
+        self.model.fit(X, y, X_val, y_val, need_train_errors_history=True)
         return self
     
     def predict(self, X):
@@ -145,6 +151,9 @@ class PredictForm(FlaskForm):
     submit_info = SubmitField("Посмотреть информацию о модели")
 
 
+class ModelInfoForm(FlaskForm):
+    submit_back = SubmitField("Назад")
+
 
 @app.route("/", methods=["GET", "POST"])
 def choose_model():
@@ -170,29 +179,32 @@ def params_selection():
     if model.type not in {RFOREST_TYPE, BOOSTING_TYPE}:
         return goto_origin()
     
-    title = "Выбор параметров модели"
-    header = f"Выберите параметры модели \"{model.type}\""
+    try:
+        title = "Выбор параметров модели"
+        header = f"Выберите параметры модели \"{model.type}\""
 
-    if model.type == BOOSTING_TYPE:
-        params_selection_form = BstParamsSelectionForm()
-    else:
-        params_selection_form = RForestParamsSelectionForm()
-    
-    if params_selection_form.validate_on_submit():
-        if params_selection_form.submit_select.data:
-            model.params["n_estimators"] = params_selection_form.n_estimators_field.data
-            if params_selection_form.max_depth_field.data != -1:
-                model.params["max_depth"] = params_selection_form.max_depth_field.data
-            model.params["feature_subsample_size"] = float(params_selection_form.feature_subsample_size_field.data)
-            if params_selection_form.learning_rate_field is not None:
-                model.params["learning_rate"] = float(params_selection_form.learning_rate_field.data)
-            
-            return redirect(url_for("fit_model"))
+        if model.type == BOOSTING_TYPE:
+            params_selection_form = BstParamsSelectionForm()
         else:
-            return goto_origin()
-    
-    return render_template("from_form.html", title=title, header=header,
-                           form=params_selection_form)
+            params_selection_form = RForestParamsSelectionForm()
+        
+        if params_selection_form.validate_on_submit():
+            if params_selection_form.submit_select.data:
+                model.params["n_estimators"] = params_selection_form.n_estimators_field.data
+                if params_selection_form.max_depth_field.data != -1:
+                    model.params["max_depth"] = params_selection_form.max_depth_field.data
+                model.params["feature_subsample_size"] = float(params_selection_form.feature_subsample_size_field.data)
+                if params_selection_form.learning_rate_field is not None:
+                    model.params["learning_rate"] = float(params_selection_form.learning_rate_field.data)
+                
+                return redirect(url_for("fit_model"))
+            else:
+                return goto_origin()
+        
+        return render_template("from_form.html", title=title, header=header,
+                            form=params_selection_form)
+    except:
+        return goto_origin()
 
 
 @app.route("/fit_model", methods=["GET", "POST"])
@@ -201,70 +213,74 @@ def fit_model(message=None):
     if model.type not in {RFOREST_TYPE, BOOSTING_TYPE}:
         return goto_origin()
 
-    title = "Обучение модели"
-    if message is None:
-        header = f"Выберите файлы для обучения модели \"{model.type}\""
-    else:
-        header = message
-    fit_form = FitPageForm()
+    try:
+        title = "Обучение модели"
+        if message is None:
+            header = f"Выберите файлы для обучения модели \"{model.type}\""
+        else:
+            header = message
+        fit_form = FitPageForm()
 
-    if request.method == 'POST':
-        if fit_form.validate_on_submit() and fit_form.submit_open.data:
-            if not fit_form.file_train_path.data:
-                return redirect("/fit_model/Необходимо передать данные для обучения")
-            if not fit_form.target_field.data:
-                return redirect("/fit_model/Необходимо указать название колонки с целевой переменной")
-            
-            try:
-                data_train = pd.read_csv(fit_form.file_train_path.data)
-            except EmptyDataError:
-                return redirect("/fit_model/Необходимо передать непустой файл для обучения")
-            
-            # use only numeric features
-            data_train = data_train.select_dtypes(include=[np.number])
-
-            if data_train.shape[0] == 0 or data_train.shape[1] <= 1:
-                return redirect("/fit_model/Передайте корректный файл для обучения")
-            
-            if fit_form.target_field.data not in data_train.columns:
-                return redirect("/fit_model/В файле для обучения нет указанной колонки с целевой переменной")
-
-            X_train = data_train.drop(columns=[fit_form.target_field.data]).to_numpy()
-            y_train = data_train[fit_form.target_field.data].to_numpy()
-
-            if fit_form.file_val_path.data:
+        if request.method == 'POST':
+            if fit_form.validate_on_submit() and fit_form.submit_open.data:
+                if not fit_form.file_train_path.data:
+                    return redirect("/fit_model/Необходимо передать данные для обучения")
+                if not fit_form.target_field.data:
+                    return redirect("/fit_model/Необходимо указать название колонки с целевой переменной")
+                
                 try:
-                    data_val = pd.read_csv(fit_form.file_val_path.data)
-                except:
-                    return redirect("/fit_model/Файл для валидации не может быть пустым")
+                    data_train = pd.read_csv(fit_form.file_train_path.data)
+                except EmptyDataError:
+                    return redirect("/fit_model/Необходимо передать непустой файл для обучения")
                 
-                data_val = data_val.select_dtypes(include=[np.number])
+                # use only numeric features
+                data_train = data_train.select_dtypes(include=[np.number])
+
+                if data_train.shape[0] == 0 or data_train.shape[1] <= 1:
+                    return redirect("/fit_model/Передайте корректный файл для обучения")
                 
-                if data_val.shape[0] == 0:
-                    return redirect("/fit_model/Файл для валидации должен содержать хотя бы один объект")
+                if fit_form.target_field.data not in data_train.columns:
+                    return redirect("/fit_model/В файле для обучения нет указанной колонки с целевой переменной")
 
-                if data_val.shape[1] != data_train.shape[1] or (data_val.columns != data_train.columns).any():
-                    return redirect("/fit_model/Файл для валидации должен быть согласован с файлом для обучения")
-                
-                X_val = data_val.drop(columns=[fit_form.target_field.data]).to_numpy()
-                y_val = data_val[fit_form.target_field.data].to_numpy()
-            else:
-                X_val = None
-                y_val = None
+                X_train = data_train.drop(columns=[fit_form.target_field.data]).to_numpy()
+                y_train = data_train[fit_form.target_field.data].to_numpy()
 
-            model.fit(X_train, y_train, X_val, y_val)
-            model.feat_columns = data_train.columns.drop(fit_form.target_field.data)
-            model.target_name = fit_form.target_field.data
+                if fit_form.file_val_path.data:
+                    try:
+                        data_val = pd.read_csv(fit_form.file_val_path.data)
+                    except:
+                        return redirect("/fit_model/Файл для валидации не может быть пустым")
+                    
+                    data_val = data_val.select_dtypes(include=[np.number])
+                    
+                    if data_val.shape[0] == 0:
+                        return redirect("/fit_model/Файл для валидации должен содержать хотя бы один объект")
 
-            return redirect(url_for("predict"))
-        
-        if fit_form.submit_back.data:
-            model.params = {}
-            return redirect(url_for("params_selection"))
-        if fit_form.submit_goto_origin.data:
-            return goto_origin()
+                    if data_val.shape[1] != data_train.shape[1] or (data_val.columns != data_train.columns).any():
+                        return redirect("/fit_model/Файл для валидации должен быть согласован с файлом для обучения")
+                    
+                    X_val = data_val.drop(columns=[fit_form.target_field.data]).to_numpy()
+                    y_val = data_val[fit_form.target_field.data].to_numpy()
+                else:
+                    X_val = None
+                    y_val = None
 
-    return render_template("from_form.html", title=title, header=header, form=fit_form)
+                model.fit(X_train, y_train, X_val, y_val)
+                model.feat_columns = data_train.columns.drop(fit_form.target_field.data)
+                model.train_data_df = data_train
+                model.target_name = fit_form.target_field.data
+
+                return redirect(url_for("predict"))
+            
+            if fit_form.submit_back.data:
+                model.params = {}
+                return redirect(url_for("params_selection"))
+            if fit_form.submit_goto_origin.data:
+                return goto_origin()
+
+        return render_template("from_form.html", title=title, header=header, form=fit_form)
+    except:
+        return goto_origin()
 
 
 @app.route("/predict", methods=["GET", "POST"])
@@ -272,56 +288,119 @@ def fit_model(message=None):
 def predict(message=None):
     if model.type not in {RFOREST_TYPE, BOOSTING_TYPE}:
         return goto_origin()
-    title = "Предсказание"
-    if message is None:
-        header = "Выберите файл для предсказания"
-    else:
-        header = message
-    form = PredictForm()
+    
+    try:
+        title = "Предсказание"
+        if message is None:
+            header = "Выберите файл для предсказания"
+        else:
+            header = message
+        form = PredictForm()
 
-    if form.validate_on_submit():
-        if form.submit_back.data:
-            return redirect(url_for("fit_model"))
-        if form.submit_goto_origin.data:
-            return goto_origin()
-        if form.submit_info.data:
-            return redirect(url_for("model_info"))
-        if form.submit_pred.data:
-            if not form.file_predict_path.data:
-                return redirect("/predict/Необходимо передать данные для предсказания")
-            try:
-                X_test = pd.read_csv(form.file_predict_path.data)
-            except EmptyDataError:
-                return redirect("/predict/Файл для предсказания должен быть не пустым")
+        if form.validate_on_submit():
+            if form.submit_back.data:
+                return redirect(url_for("fit_model"))
+            if form.submit_goto_origin.data:
+                return goto_origin()
+            if form.submit_info.data:
+                return redirect(url_for("model_info"))
+            if form.submit_pred.data:
+                if not form.file_predict_path.data:
+                    return redirect("/predict/Необходимо передать данные для предсказания")
+                try:
+                    X_test = pd.read_csv(form.file_predict_path.data)
+                except EmptyDataError:
+                    return redirect("/predict/Файл для предсказания должен быть не пустым")
 
-            X_test = X_test.select_dtypes(include=[np.number])
+                X_test = X_test.select_dtypes(include=[np.number])
 
-            if X_test.shape[0] == 0:
-                return redirect("/predict/Файл для предсказания должен содержать хотя бы один объект")
+                if X_test.shape[0] == 0:
+                    return redirect("/predict/Файл для предсказания должен содержать хотя бы один объект")
 
-            if X_test.shape[1] == model.feat_columns.shape[0] + 1:
-                if model.target_name not in X_test.columns:
+                if X_test.shape[1] == model.feat_columns.shape[0] + 1:
+                    if model.target_name not in X_test.columns:
+                        return redirect("/predict/Файл для предсказания должен быть согласован с файлом для обучения")
+                    X_test = X_test.drop(columns=[model.target_name])
+
+                if (X_test.columns != model.feat_columns).any():
                     return redirect("/predict/Файл для предсказания должен быть согласован с файлом для обучения")
-                X_test = X_test.drop(columns=[model.target_name])
+                
+                X_test = X_test.to_numpy()
+                pred = model.predict(X_test)
+                np.savetxt("pred.txt", pred)
 
-            if (X_test.columns != model.feat_columns).any():
-                return redirect("/predict/Файл для предсказания должен быть согласован с файлом для обучения")
+                return redirect("/upload/pred.txt")
             
-            X_test = X_test.to_numpy()
-            pred = model.predict(X_test)
-            np.savetxt("pred.txt", pred)
 
-            return redirect("/upload/pred.txt")
-        
-
-    return render_template("from_form.html", form=form, title=title, header=header)
+        return render_template("from_form.html", form=form, title=title, header=header)
+    except:
+        return goto_origin()
 
 
-@app.route("/model_info")
+@app.route("/model_info", methods=["POST", "GET"])
 def model_info():
-    return "<h1>info</h1>"
+    if model.type not in {RFOREST_TYPE, BOOSTING_TYPE}:
+        return goto_origin()
+    
+    try:
+        title = "Информация о модели"
+        header = f"Информация о модели \"{model.type}\""
+        form = ModelInfoForm()
+
+        if form.validate_on_submit():
+            return redirect(url_for("predict"))
+
+        x = np.arange(1, model.params["n_estimators"] + 1)
+        train_errors_history = model.model.train_errors_history
+        val_errors_history = model.model.ensemble_errors_history
+
+        df_train = pd.DataFrame({
+            "число деревьев": x,
+            "RMSE": train_errors_history
+        })
+
+        if val_errors_history is not None:
+            fig = make_subplots(rows=1, cols=2, x_title="число деревьев", y_title="RMSE")
+
+            df_val = pd.DataFrame({
+                "число деревьев": x,
+                "RMSE": val_errors_history
+            })
+
+            fig.add_trace(go.Bar(x=df_train["число деревьев"], y=df_train["RMSE"], name="Обучающая выборка"), 1, 1)
+
+            fig.add_trace(go.Bar(x=df_val["число деревьев"], y=df_val["RMSE"], name="Валидационная выборка"), 1, 2)
+
+            fig.update_layout(title_text="График зависимости RMSE от числа деревьев", title_x=0.5)
+
+        else:
+            fig = px.bar(df_train, x="число деревьев", y="RMSE",
+                                title="График зависимости RMSE на обучающей выборке от числа деревьев")
+            fig.update_layout(title_x=0.5)
+            
+        # Create graphJSON
+        graphJSON = json.dumps(fig, cls=plotly.utils.PlotlyJSONEncoder)
+        
+        params_to_display = model.params.copy()
+        if "learning_rate" not in params_to_display:
+            params_to_display["learning_rate"] = None
+        if "max_depth" not in params_to_display:
+            params_to_display["max_depth"] = "-1"
+
+        params_to_display["n_sam"] = model.train_data_df.shape[0]
+        params_to_display["n_feat"] = model.train_data_df.shape[1] - 1
+
+        # Use render_template to pass graphJSON to html
+        return render_template('model_info.html', graphJSON=graphJSON,
+                            title=title, header=header, form=form,
+                            **params_to_display)
+    except:
+        return goto_origin()
 
 
 @app.route("/upload/<path:name>")
 def upload(name):
-    return send_from_directory(".", name, as_attachment=True)
+    try:
+        return send_from_directory(".", name, as_attachment=True)
+    except:
+        return goto_origin()

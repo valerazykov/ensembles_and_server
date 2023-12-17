@@ -1,6 +1,5 @@
 from ml_server import app
-
-#TODO: waitress, host
+from waitress import serve
 
 if __name__ == '__main__':
-    app.run(host='192.168.1.175', port=5000, debug=True)
+    serve(app, host='::', port='5000', threads=2)
