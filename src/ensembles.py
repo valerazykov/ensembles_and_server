@@ -41,9 +41,10 @@ class RandomForestMSE:
         self.trees_parameters = trees_parameters
 
         self.trees = None
-        self.ensemble_errors_history = None
+        self.ensemble_errors_history = None  # errors on X_val
+        self.train_errors_history = None  # errors on X_train
 
-    def fit(self, X, y, X_val=None, y_val=None):
+    def fit(self, X, y, X_val=None, y_val=None, need_train_errors_history=False):
         """
         X : numpy ndarray
             Array of size n_objects, n_features
@@ -86,6 +87,16 @@ class RandomForestMSE:
                 ensemble_pred = np.sum(trees_preds, axis=0) / (tree_num + 1)
                 self.ensemble_errors_history[tree_num] = self.error_func(
                     y_val, ensemble_pred
+                )
+
+        if need_train_errors_history:
+            self.train_errors_history = np.zeros(self.n_estimators)
+            trees_preds = np.zeros((self.n_estimators, X.shape[0]))
+            for tree_num, tree in enumerate(self.trees):
+                trees_preds[tree_num] = tree.predict(X)
+                ensemble_pred = np.sum(trees_preds, axis=0) / (tree_num + 1)
+                self.train_errors_history[tree_num] = self.error_func(
+                    y, ensemble_pred
                 )
 
         return self
@@ -143,9 +154,10 @@ class GradientBoostingMSE:
 
         self.trees = None
         self.alphas = None
-        self.ensemble_errors_history = None
+        self.ensemble_errors_history = None  # errors on X_val
+        self.train_errors_history = None  # errors on X_train
 
-    def fit(self, X, y, X_val=None, y_val=None):
+    def fit(self, X, y, X_val=None, y_val=None, need_train_errors_history=False):
         """
         X : numpy ndarray
             Array of size n_objects, n_features
@@ -191,6 +203,16 @@ class GradientBoostingMSE:
                 )
                 self.ensemble_errors_history[tree_num] = self.error_func(
                     y_val, ensemble_pred
+                )
+
+        if need_train_errors_history:
+            self.train_errors_history = np.zeros(self.n_estimators)
+            trees_preds = np.zeros((self.n_estimators, X.shape[0]))
+            for tree_num, tree in enumerate(self.trees):
+                trees_preds[tree_num] = tree.predict(X)
+                ensemble_pred = np.sum(trees_preds, axis=0) / (tree_num + 1)
+                self.train_errors_history[tree_num] = self.error_func(
+                    y, ensemble_pred
                 )
 
         return self
