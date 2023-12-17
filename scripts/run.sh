@@ -1,0 +1,1 @@
+docker run -p 5000:5000 -v "$PWD/FlaskExample/artifacts:/root/FlaskExample/artifacts" --rm -i flask_app
