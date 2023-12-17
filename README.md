@@ -2,7 +2,7 @@
 
 ## Cборка
 
-Команда, чтобы собрать docker-обаз (в корневом каталоге задания):
+Команда, чтобы собрать docker-образ (в корневом каталоге задания):
 
 `docker build . -t flask_app`
 
@@ -10,7 +10,7 @@
 
 `docker run -p 5000:5000 -v "$PWD/FlaskExample/artifacts:/root/FlaskExample/artifacts" --rm -i flask_app`.
 
-Можно запустиьть docker-обаз одной командой (используя hub.docker.com):
+Можно запустить docker-образ одной командой (используя hub.docker.com):
 
 `docker run -it --rm -p 5000:5000 -v "$PWD/FlaskExample/artifacts" valerazykov/flask_app`
 
